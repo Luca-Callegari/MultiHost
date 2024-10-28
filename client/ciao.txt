@@ -1,0 +1,3 @@
+This collection is the main benchmark for comparing compression methods. The Calgary collection is provided for historic interest, the Large corpus is useful for algorithms that can't "get up to speed" on smaller files, and the other collections may be useful for particular file types.
+This collection was developed in 1997 as an improved version of the Calgary corpus. The files were chosen because their results on existing compression algorithms are "typical", and so it is hoped this will also be true for new methods.
+The paper in DCC '97 (Adobe PDF, 99Kb) explains how the files were chosen, and why it is difficult to find "typical" files. This collection will not be changed so that it can be used as a benchmark in future.
