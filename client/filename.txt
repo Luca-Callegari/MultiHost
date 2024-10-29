@@ -1,3 +1,2 @@
 ciao.txt
 input.txt
-ciao.txt

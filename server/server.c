@@ -5,10 +5,36 @@ int server_socket;
 struct sockaddr_in server_address;
 int len_server_address;
 int contatore_file_server = 0;
+char *filename;
 
 void error_(char *prompt){
     fprintf(stderr, "%s", prompt);
     fflush(stderr);
+}
+
+packet_t* make_packet(cmd_t _cmd, pos_t _pos, char _fin_flag, char *_filename, packet_len_t _filename_len, void *_body, packet_len_t _body_len) {
+
+    packet_len_t packet_len = sizeof(packet_header_t) + _body_len + _filename_len;
+
+    // Alloca il pacchetto
+    packet_t *packet = malloc(packet_len);
+    if (!packet) {
+        perror("[CLIENT] Errore durante l'allocazione del pacchetto");
+        return NULL;
+    }
+
+    char *filename_ptr = (char *) ((char *) packet + sizeof(packet_header_t));
+    char *body_ptr = filename_ptr + _filename_len;
+
+    packet->header.cmd = htons(_cmd);
+    packet->header.len = htonl(packet_len);
+    packet->header.body_len = htonl(_body_len);
+    packet->header.pos = htonl(_pos);
+    packet->header.fin_flag = _fin_flag;
+    memcpy(filename_ptr, _filename, _filename_len);
+    memcpy(body_ptr, _body, _body_len);
+    return packet;
+
 }
 
 void save_filename_in_filename_txt(char *client_filename){
@@ -26,37 +52,40 @@ void save_filename_in_filename_txt(char *client_filename){
     fseek(f, 0 , SEEK_END);
 }
 
-void spedisci_file(char *server_filename, int client_socket){
+void spedisci_file(packet_t *_packet){
+    
+    struct sockaddr_in _client_address = _packet->header.address;
+    socklen_t _len_client_address = sizeof(_client_address);
+
+    char *filename = (char *) ((char *) _packet + sizeof(packet_header_t));
+
     // --- Spedisco il file ---
-    FILE *f = fopen(server_filename, "r");
+    FILE *f = fopen(filename, "r");
+    packet_len_t filename_len = strlen(filename) + 1;
     if(f == NULL) error_("[SERVER] Errore apertura file");
-    // Salvo un int a 32 bit all'inizio del messaggio (come fosse un'header) per specificare la lunghezza del messaggio che sto inviando
-
+    
     // Buffer per inviare il messaggio
-    size_t headerSize = sizeof(uint32_t) + sizeof(char);
-    size_t bufferSize = headerSize + sizeof(char) * MAX_MSG_CLUSTER;
-    char *buffer = malloc(bufferSize);
+    void *buffer = malloc(MAX_MSG_CLUSTER);
 
-    // Puntatore alla lunghezza del messaggio del buffer
-    uint32_t *msgLenHeader = (uint32_t *) buffer;
-
-    // Puntatore al flag per capire se il messaggio inviato è l'ultimo o meno
-    char *msgFinHeader = (char *) (msgLenHeader + 1);
-
-    // Puntatore al messaggio contenuto nel buffer
-    char *msgBufferStart = msgFinHeader + 1;
-
-    uint32_t r = 0;
+    packet_len_t r = 0;
+    packet_t *packet;
+    pos_t pos = 0;
+    char fin_flag;
     do {
-        memset(buffer, 0, bufferSize);
-        r = fread(msgBufferStart, sizeof(char), MAX_MSG_CLUSTER, f);
-        *msgLenHeader = htonl(r);
-        *msgFinHeader = feof(f) ? 1 : 0;
-        sendto(client_socket, buffer, bufferSize, MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
+        memset(buffer, 0, MAX_MSG_CLUSTER);
+        pos = ftell(f);
+        r = fread(buffer, sizeof(char), MAX_MSG_CLUSTER, f);
+        fin_flag = feof(f) ? 1 : 0;
+        packet = make_packet(CMD_DOWNLOAD, pos, fin_flag, filename, filename_len, buffer, r);
+        printf("[SERVER] Inviando un pacchetto di %d bytes (%d)\n", ntohl(packet->header.len), ntohl(packet->header.body_len));
+        sendto(server_socket, packet, ntohl(packet->header.len), MSG_CONFIRM, (struct sockaddr *) &_client_address, _len_client_address);
+        //sleep(1);
+        free(packet);
     } while(!feof(f));
-    printf("[SERVER] Download of %s finished\n", server_filename); 
+    printf("\n[SERVER] Download of %s finished\n", filename); 
     fclose(f);
     free(buffer);
+    
 }
 
 void ricevi_file(packet_t *packet){
@@ -134,38 +163,6 @@ int file_presente_nel_server(char *server_filename, int client_socket){
     return 0;
 }
 
-void get(char *server_filename, int client_socket){
-    //File che devo travasare e travaso
-    int noFile;
-    if(file_presente_nel_server(server_filename, client_socket) == 1){
-        noFile = 1;
-        sendto(client_socket, &noFile, sizeof(int), MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
-        FILE *f = fopen(server_filename, "r");
-        errore_apertura_file(f);
-        printf("%s", server_filename);
-        spedisci_file(server_filename, client_socket);
-    }else{
-        noFile = 0;
-        sendto(client_socket, &noFile, sizeof(int), MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
-    }
-        
-}
-
-void recezione(int client_socket){
-
-    int length;
-    recvfrom(client_socket, &length, sizeof(int), MSG_WAITALL, (struct sockaddr *) &server_address, &len_server_address);
-
-    char *server_filename = malloc(length + 1);  // Alloca spazio per la stringa e il terminatore
-    memset(server_filename, 0, length + 1);
-    recvfrom(client_socket, server_filename, length, MSG_WAITALL, (struct sockaddr *)&server_address, &len_server_address);
-    server_filename[length] = '\0';  // Termina la stringa
-
-    get(server_filename, client_socket);
-}
-
-
-
 void list(int client_socket){
     //DEVO PRENDERE RIGA PER RIGA DA FILENAME.TXT E MANDARLO AL CLIENT
     FILE *f = fopen("filename.txt", "r");
@@ -224,7 +221,7 @@ void* worker_thread(void* args) {
             case CMD_LIST:
                 break;
             case CMD_DOWNLOAD:
-                recezione(server_socket);
+                spedisci_file(packet);
                 break;
             default:
                 fprintf(stderr, "[THREAD-%lu] Comando non riconosciuto: %d\n", tid, packet->header.cmd);
@@ -369,7 +366,7 @@ int main(int argc, char**argv) {
         packet->header.cmd = ntohs(packet->header.cmd);
         packet->header.pos = ntohl(packet->header.pos);
 
-        char *filename = (char *) ((char *) packet + sizeof(packet_header_t));
+        filename = (char *) ((char *) packet + sizeof(packet_header_t));
 
         client_ip = inet_ntoa(packet->header.address.sin_addr);
         client_port = ntohs(packet->header.address.sin_port);
@@ -382,7 +379,7 @@ int main(int argc, char**argv) {
         printf("[MAIN] Hashing di: %s\n", filename);
         fflush(stdout);
         index = hash(filename) % WORKER_THREADS_NUM;
-        printf("[MAIN] Asseganto al thread %d\n", index);
+        printf("[MAIN] Assegnato al thread %d\n", index);
         fflush(stdout);
         enqueue(&(packet_queues[index]), packet);
 

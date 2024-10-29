@@ -111,59 +111,57 @@ void spedisci_file(char *server_filename, int client_socket){
 
 }
 
-void ricevi_file(char *client_filename, int client_socket){
-    // --- Salvo il file ---
+void ricevi_file(int client_socket){
 
-    FILE *f = fopen(client_filename, "w");
-    if(f == NULL) error_("[CLIENT] Errore apertura file");
+    struct sockaddr_in client_address;
+    socklen_t len_client_address;
 
-    // Buffer per ricevere il messaggio
-    size_t headerSize = sizeof(uint32_t) + sizeof(char);
-    size_t bufferSize = headerSize + sizeof(char) * MAX_MSG_CLUSTER;
-    char *buffer = malloc(bufferSize);
+    getsockname(client_socket, (struct sockaddr *) &client_address, &len_client_address);
 
-    // Puntatore alla lunghezza del messaggio del buffer
-    uint32_t *msgLenHeader = (uint32_t *) buffer;
+    client_address.sin_addr.s_addr = INADDR_ANY;        // Sovrascrive l'IP
 
-    // Puntatore al flag per capire se il messaggio inviato è l'ultimo o meno
-    char *msgFinHeader = (char *) (msgLenHeader + 1);
+   // --- Salvo il file ---
 
-    // Puntatore al messaggio contenuto nel buffer
-    char *msgBufferStart = msgFinHeader + 1;
+    char fin_flag = 0;
+    packet_t *packet = malloc(MAX_PACKET_LEN);
 
-    uint32_t msgLen = 0;
-    char msgFin = 0;
-    do {
-        memset(buffer, 0, bufferSize);
-        recvfrom(client_socket, buffer, bufferSize, MSG_WAITALL, (struct sockaddr *)&server_address, &len_server_address);
-        msgLen = ntohl(*msgLenHeader);
-        msgFin = *msgFinHeader;
-        fwrite(msgBufferStart, sizeof(char), msgLen, f);
-    } while(!msgFin);
-    printf("[CLIENT] Upload of %s finished\n", client_filename); 
-    fclose(f);
-    free(buffer);
-}
+    while(!fin_flag){
 
-void get(char *server_filename, int client_socket){
+        memset(packet, 0, MAX_PACKET_LEN);
+        recvfrom(client_socket, packet, MAX_PACKET_LEN, 0, (struct sockaddr *) &client_address, &len_client_address);
 
-    int length = strlen(server_filename);
-    sendto(client_socket, &length, sizeof(int), MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
-    sendto(client_socket, server_filename, length, MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
-    printf("%s", server_filename);
+        memcpy(&(packet->header.address), &client_address, len_client_address);
+        packet->header.len = ntohl(packet->header.len);
+        packet->header.body_len = ntohl(packet->header.body_len);
+        packet->header.cmd = ntohs(packet->header.cmd);
+        packet->header.pos = ntohl(packet->header.pos);
 
-    int noFile;
-    int length_ = sizeof(server_address);
-    recvfrom(client_socket, &noFile, sizeof(int), MSG_TRUNC, (struct sockaddr *)&server_address, &length);
+        char *filename = (char *) ((char *) packet + sizeof(packet_header_t));
+        char *body = filename + strlen(filename) + 1;
 
-    if(noFile == 1){
-        //Creo file destinazione nel client
-        FILE *f = fopen(server_filename, "w+");
-        if(f == NULL) error_("Errore apertura file\n");
-        ricevi_file(server_filename, client_socket);
-    }else{
-        printf("File non presente nel server!");
+        printf("[CLIENT] Downloading file %s from server\n", filename);
+        fflush(stdout);
+
+        FILE *f = NULL;
+        if(packet->header.pos == 0) {
+            f = fopen(filename, "w");
+            if(f == NULL) error_("[CLIENT] Errore apertura file (1)\n");
+        } else {
+            f = fopen(filename, "r+");
+            if(f == NULL) error_("[CLIENT] Errore apertura file (2)\n");
+            if (fseek(f, (long) packet->header.pos, SEEK_SET) != 0) error_("[SERVER] Errore nel posizionamento del cursore");
+        }
+        if(f == NULL) error_("[CLIENT] Errore apertura file (3)\n");
+
+        fwrite(body, sizeof(char), packet->header.body_len, f);
+        fflush(f);
+        fin_flag = packet->header.fin_flag;
+        if(fin_flag) printf("[CLIENT] Download of %s finished\n", filename); 
+        fclose(f);
+
     }
+
+    free(packet);
 
 }
 
@@ -233,6 +231,32 @@ int main(int argc, char **argv){
             case '2':
                 break;
             case '3':
+                leggi_stringa("Inserire nome del file: ", client_filename);
+                printf("[CLIENT] Downloading %s...\n", client_filename);
+                fflush(stdout);
+                // Buffer per inviare il messaggio (che dice solo il nome del file che voglio downloadare)
+                void *buffer = malloc(MAX_MSG_CLUSTER);
+                uint32_t r = 0;
+                packet_t *packet;
+                pos_t pos = 0;
+                char fin_flag;
+                
+                memset(buffer, 0, MAX_MSG_CLUSTER);
+                pos = 0;
+                    
+                fin_flag = 1;
+                packet = make_packet(CMD_DOWNLOAD, pos, fin_flag, client_filename, strlen(client_filename)+1, buffer, 0);
+                printf("[CLIENT] Inviando un pacchetto di %d bytes (%d)\n", ntohl(packet->header.len), ntohl(packet->header.body_len));
+                sendto(client_socket, packet, ntohl(packet->header.len), MSG_CONFIRM, (struct sockaddr *) &server_address, server_addr_len);
+                free(packet);    
+            
+                printf("[CLIENT] Dowload of %s\n...", client_filename); 
+                
+                free(buffer);
+
+                //Recezione file giusto
+                ricevi_file(client_socket);
+
                 break;
             
         }
