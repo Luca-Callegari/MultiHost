@@ -165,21 +165,6 @@ void ricevi_file(int client_socket){
 
 }
 
-void list(int client_socket){
-    //Prendo il numero di righe del file dal server (caricati da client)
-    char str[256];
-    recvfrom(client_socket, str, sizeof(str), MSG_WAITALL, (struct sockaddr *)&server_address, &len_server_address);
-    int righe = (int)strtoul(str, NULL, 10);
-    printf("Il numero di file presenti nel server sono: %d", righe);
-    //Prendo tutte le stringhe (riga per riga) che sono presenti nel filename.txt nel server
-    printf("\nI file presenti nel server (caricati dal client) sono: \n");
-    char buffer[MAX_FILE_NAME_LENGTH];
-    memset(buffer, 0, MAX_FILE_NAME_LENGTH);
-    for(int i = 0; i < righe; i++){
-        recvfrom(client_socket, buffer, sizeof(buffer), MSG_WAITALL, (struct sockaddr *)&server_address, &len_server_address);
-        printf("%s\n", buffer);
-    }
-}
 
 int main(int argc, char **argv){
 
@@ -229,28 +214,55 @@ int main(int argc, char **argv){
                 }
                 break;
             case '2':
-                break;
-            case '3':
-                leggi_stringa("Inserire nome del file: ", client_filename);
-                printf("[CLIENT] Downloading %s...\n", client_filename);
-                fflush(stdout);
-                // Buffer per inviare il messaggio (che dice solo il nome del file che voglio downloadare)
+                // Buffer per inviare il messaggio (che dice solo il nome del file che voglio downloadare, ovvero filename.txt)
                 void *buffer = malloc(MAX_MSG_CLUSTER);
                 uint32_t r = 0;
                 packet_t *packet;
                 pos_t pos = 0;
                 char fin_flag;
-                
+                //Forzo che voglio fare il download di filename.txt
+                strcpy(client_filename, "filename.txt");
+
                 memset(buffer, 0, MAX_MSG_CLUSTER);
                 pos = 0;
-                    
+                fin_flag = 1;
+                packet = make_packet(CMD_LIST, pos, fin_flag, client_filename, strlen(client_filename)+1, buffer, 0);
+                printf("[CLIENT] Inviando un pacchetto di %d bytes (%d)\n", ntohl(packet->header.len), ntohl(packet->header.body_len));
+                sendto(client_socket, packet, ntohl(packet->header.len), MSG_CONFIRM, (struct sockaddr *) &server_address, server_addr_len);
+                free(packet);    
+            
+                printf("[CLIENT] Get list of server's files"); 
+                
+                free(buffer);
+
+                //Recezione file giusto
+                ricevi_file(client_socket);
+                //Stampoo su standard output il contenuto del file
+                system("cat filename.txt");
+                system("rm filename.txt");
+
+                break;
+            case '3':
+                leggi_stringa("Inserire nome del file: ", client_filename);
+                printf("[CLIENT] Downloading %s...\n", client_filename);
+                fflush(stdout);
+
+                // Buffer per inviare il messaggio (che dice solo il nome del file che voglio downloadare)
+                buffer = malloc(MAX_MSG_CLUSTER);
+                r = 0;
+                
+                pos = 0;
+               
+
+                memset(buffer, 0, MAX_MSG_CLUSTER);
+                pos = 0;
                 fin_flag = 1;
                 packet = make_packet(CMD_DOWNLOAD, pos, fin_flag, client_filename, strlen(client_filename)+1, buffer, 0);
                 printf("[CLIENT] Inviando un pacchetto di %d bytes (%d)\n", ntohl(packet->header.len), ntohl(packet->header.body_len));
                 sendto(client_socket, packet, ntohl(packet->header.len), MSG_CONFIRM, (struct sockaddr *) &server_address, server_addr_len);
                 free(packet);    
             
-                printf("[CLIENT] Dowload of %s\n...", client_filename); 
+                printf("[CLIENT] Download of %s\n...", client_filename); 
                 
                 free(buffer);
 

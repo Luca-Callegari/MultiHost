@@ -38,18 +38,22 @@ packet_t* make_packet(cmd_t _cmd, pos_t _pos, char _fin_flag, char *_filename, p
 }
 
 void save_filename_in_filename_txt(char *client_filename){
-    //Salvo il client_filename in files[]
-    /*files[index_filename] = malloc(MAX_FILE_NAME_LENGTH*sizeof(char));
-    strcpy(files[index_filename], client_filename);
-    printf("%s\n", files[index_filename]);
-    index_filename++;
-    */
 
     //Scrivo i nomi dei file che sto creando su un file chiamato filename.txt
-    FILE *f = fopen("filename.txt", "a");
+    FILE *f = fopen("filename.txt", "a+");
     if(f == NULL) error_("Errore nella scrittura di in un file");
-    fprintf(f,"%s\n", client_filename);
-    fseek(f, 0 , SEEK_END);
+    char *buffer;
+    int count = 0;
+    while(fscanf(f, "%ms", &buffer) != EOF){
+        if(!strcmp(buffer, client_filename)){
+            count = 1;
+            break;
+        }
+    }
+    if(count == 0){
+        fprintf(f,"%s\n", client_filename);
+        fseek(f, 0 , SEEK_END);
+    }
 }
 
 void spedisci_file(packet_t *_packet){
@@ -163,19 +167,7 @@ int file_presente_nel_server(char *server_filename, int client_socket){
     return 0;
 }
 
-void list(int client_socket){
-    //DEVO PRENDERE RIGA PER RIGA DA FILENAME.TXT E MANDARLO AL CLIENT
-    FILE *f = fopen("filename.txt", "r");
-    errore_apertura_file(f);
-    fseek(f,0,SEEK_SET);
-    char buffer[MAX_FILE_NAME_LENGTH];
-    while(fscanf(f, "%s", buffer) != EOF){
-        fprintf(stdout, "%s \n", buffer);
-        sendto(client_socket, buffer, sizeof(buffer), MSG_CONFIRM, (struct sockaddr *)&server_address, sizeof(server_address));
-    }
-    printf("Trasferimento nomi file uploadati completato con successo!\n");
-    fclose(f);
-}
+
 
 int n_righe_file(FILE *f){
     char buffer[MAX_FILE_NAME_LENGTH];
@@ -219,6 +211,7 @@ void* worker_thread(void* args) {
                 ricevi_file(packet);
                 break;
             case CMD_LIST:
+                spedisci_file(packet);
                 break;
             case CMD_DOWNLOAD:
                 spedisci_file(packet);
